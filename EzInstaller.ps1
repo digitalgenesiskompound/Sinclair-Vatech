@@ -1,0 +1,208 @@
+# Set TLS 1.2 (recommended for secure downloads)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# Helper function for downloading a file.
+function Invoke-DownloadFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Url,
+        [Parameter(Mandatory = $true)]
+        [string]$OutputFile
+    )
+    # Construct full output path (current working directory)
+    $OutputFullPath = Join-Path -Path (Get-Location) -ChildPath $OutputFile
+
+    Write-Output "Downloading '$OutputFile' from $Url ..."
+    
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+        Invoke-WebRequest -Uri $Url -OutFile $OutputFullPath
+    }
+    else {
+        $wc = New-Object System.Net.WebClient
+        try {
+            $wc.DownloadFile($Url, $OutputFullPath)
+        }
+        catch {
+            Write-Error "Download failed for '$OutputFile': $_"
+            return $false
+        }
+        finally {
+            $wc.Dispose()
+        }
+    }
+    
+    # Verify that the file exists and is not empty.
+    if (Test-Path $OutputFullPath) {
+        $fileInfo = Get-Item $OutputFullPath
+        if ($fileInfo.Length -gt 0) {
+            Write-Output "Download of '$OutputFile' completed successfully."
+            return $true
+        }
+        else {
+            Write-Error "Download of '$OutputFile' appears to be empty."
+            return $false
+        }
+    } 
+    else {
+        Write-Error "Download of '$OutputFile' failed: file not found."
+        return $false
+    }
+}
+
+# Helper function for launching an installer.
+function Invoke-InstallFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath
+    )
+    Write-Output "Launching installation of '$FilePath'..."
+    # Launch the installer asynchronously.
+    Start-Process -FilePath $FilePath
+    Write-Output "Installer has been launched. Please complete the installation manually."
+}
+
+# Helper function to search the current directory for an installer file matching a given product.
+function Get-InstallerFileFromDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProductName
+    )
+    # Define a search pattern based on the product name.
+    if ($ProductName -match "EzDent") {
+        $pattern = "EzDent"
+    }
+    elseif ($ProductName -match "Ez3D") {
+        $pattern = "Ez3D"
+    }
+    elseif ($ProductName -match "EzServer") {
+        $pattern = "EzServer"
+    }
+    else {
+        $pattern = $ProductName
+    }
+    
+    # Search the current directory (case-insensitive).
+    $found = Get-ChildItem -Path (Get-Location) -File | Where-Object { $_.Name -imatch $pattern }
+    if ($found) {
+        return $found[0].FullName
+    }
+    return $null
+}
+
+# Define download options with corresponding links and expected output file names.
+$downloads = @{
+    '1' = @{
+        Name   = "EzDent-i"
+        Url    = "https://vatech.blob.core.windows.net/ezsoftware/EzDent-i V3.5.3(Patch) Setup.exe"
+        Output = "EzDent-i.exe"
+    }
+    '2' = @{
+        Name   = "Ez3D-i"
+        Url    = "https://vatech.blob.core.windows.net/ezsoftware/Ez3D-i V5.5.4 Setup(x64).exe"
+        Output = "Ez3D-i.exe"
+    }
+    '3' = @{
+        Name   = "EzServer"
+        Url    = "https://vatech.blob.core.windows.net/ezsoftware/EzServer V5.5.1 Setup.exe"
+        Output = "EzServer.exe"
+    }
+}
+
+# Prompt the user for overall action.
+Write-Host "Choose an action:" -ForegroundColor Cyan
+Write-Host "1. Download and Install"
+Write-Host "2. Download Only"
+Write-Host "3. Install Only"
+$action = Read-Host "Enter your selection (1-3)"
+
+# Set the header text based on the overall action.
+if ($action -eq 3) {
+    $promptHeader = "Install Options:"
+} else {
+    $promptHeader = "Download Options:"
+}
+
+# Prompt the user for product selection.
+Write-Host "`n$promptHeader" -ForegroundColor Cyan
+Write-Host "1. EzDent-i"
+Write-Host "2. Ez3D-i"
+Write-Host "3. EzServer"
+Write-Host "4. EzDent-i & Ez3D-i only"
+Write-Host "5. All"
+$choice = Read-Host "Enter your selection (1-5)"
+
+# Build an array of selected items based on user's choice.
+$selectedDownloads = @()
+
+switch ($choice) {
+    '1' {
+        $selectedDownloads += $downloads['1']
+    }
+    '2' {
+        $selectedDownloads += $downloads['2']
+    }
+    '3' {
+        $selectedDownloads += $downloads['3']
+    }
+    '4' {
+        # Only EzDent-i & Ez3D-i.
+        $selectedDownloads += $downloads['1']
+        $selectedDownloads += $downloads['2']
+    }
+    '5' {
+        # All items, processed in order: EzServer, then EzDent-i, then Ez3D-i.
+        $selectedDownloads += $downloads['3']
+        $selectedDownloads += $downloads['1']
+        $selectedDownloads += $downloads['2']
+    }
+    default {
+        Write-Warning "Invalid selection. Please run the script again and choose a valid option (1-5)."
+        exit
+    }
+}
+
+# Process each selected item.
+foreach ($item in $selectedDownloads) {
+    # Define the expected file path (based on the expected output name) in the current directory.
+    $expectedFile = Join-Path (Get-Location) $item.Output
+
+    switch ($action) {
+        '1' {  # Download and then Install.
+            if (Invoke-DownloadFile -Url $item.Url -OutputFile $item.Output) {
+                Invoke-InstallFile -FilePath $expectedFile
+            }
+            else {
+                Write-Error "Skipping installation for '$($item.Output)' because the download failed."
+            }
+        }
+        '2' {  # Download only.
+            Invoke-DownloadFile -Url $item.Url -OutputFile $item.Output | Out-Null
+        }
+        '3' {  # Install only.
+            if (Test-Path $expectedFile) {
+                Write-Output "Found file '$expectedFile'."
+                Invoke-InstallFile -FilePath $expectedFile
+            }
+            else {
+                # Otherwise, search the current directory for a matching installer.
+                $foundFile = Get-InstallerFileFromDirectory -ProductName $item.Name
+                if ($foundFile) {
+                    Write-Output "No expected file '$($item.Output)' found. Found installer file '$foundFile' matching '$($item.Name)'."
+                    Invoke-InstallFile -FilePath $foundFile
+                }
+                else {
+                    Write-Warning "No installer file found for '$($item.Name)' in the current directory."
+                }
+            }
+        }
+        default {
+            Write-Warning "Invalid overall action. Exiting."
+            exit
+        }
+    }
+}
+
+Write-Output "All selected operations have completed."
