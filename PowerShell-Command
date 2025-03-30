@@ -1,0 +1,1 @@
+iwr 'https://raw.githubusercontent.com/digitalgenesiskompound/Sinclair-Vatech/refs/heads/main/EzInstaller' | iex
